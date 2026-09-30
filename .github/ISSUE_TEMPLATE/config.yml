@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Bronto platform support
+    url: https://bronto.io
+    about: |
+      For help with the Bronto platform or your account, please contact Bronto
+      support rather than filing an issue here.
+  - name: Before proposing a feature
+    url: https://github.com/bronto-community/bronto-alert-investigation-agent/blob/main/CONTRIBUTING.md#what-this-project-accepts
+    about: |
+      The feature set is frozen to keep the code small enough to learn from.
+      Fork it, or copy the parts you need — that is the intended use.

@@ -1,0 +1,22 @@
+# The interactive Slack bot on Fly.io. Copy to the repo root as fly.toml (which
+# is gitignored), set `app` to your own app name, then `fly deploy`.
+#
+# No [http_service] and no [[services]], on purpose — see "On Fly.io" in the
+# README. https://fly.io/docs/reference/configuration/ covers the rest.
+
+app = '<your-bot-app>'
+primary_region = 'ams'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  BRONTO_REGION = 'eu'
+
+[processes]
+  bot = 'investigator-slack --provider bedrock --model-id eu.anthropic.claude-sonnet-4-6'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+  processes = ['bot']

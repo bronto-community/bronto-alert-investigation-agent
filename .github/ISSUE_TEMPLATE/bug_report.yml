@@ -1,0 +1,68 @@
+name: Bug report
+description: Something the investigator does wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please redact API keys,
+        Slack tokens, webhook secrets and any log content you would rather
+        keep private before submitting.
+
+        This project's feature set is frozen on purpose (see CONTRIBUTING.md),
+        so this form is for bugs only.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Describe the bug
+      description: What happened, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: To reproduce
+      description: The command you ran, or the event you sent.
+      placeholder: |
+        uv run investigator --provider anthropic --model-id … --event event.json
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - CLI
+        - Slack bot
+        - Webhook receiver
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Model provider and model id
+      placeholder: anthropic / claude-sonnet-4-5
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: Python 3.13.1
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "`git rev-parse --short HEAD`"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: With `--log-level DEBUG` if you can. Redact first.
+      render: text
+    validations:
+      required: false

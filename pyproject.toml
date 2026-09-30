@@ -1,0 +1,218 @@
+[project]
+name = "bronto-investigator"
+version = "0.2.0"
+description = "A logs-based alert investigation agent for Bronto."
+readme = "README.md"
+authors = [{ name = "Bronto", email = "support@bronto.io" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["bronto", "observability", "langgraph", "langchain", "sre", "agent"]
+requires-python = ">=3.11"
+classifiers = [
+    # Not published to PyPI: run it from a checkout, or fork it. This makes an
+    # accidental `twine upload` fail instead of claiming the name.
+    "Private :: Do Not Upload",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "langchain>=1.3.14",
+    "langchain-anthropic>=1.5.2",
+    "langchain-openai>=1.4.1",
+    "langchain-aws>=1.6.3",
+    "openinference-instrumentation-langchain>=0.1.67",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp>=1.44.0",
+    "langchain-mcp-adapters>=0.3.1",
+    # Pin to the 1.x line: mcp 2.0 restructured server/ (dropped
+    # mcp.server.fastmcp) which langchain-mcp-adapters 0.3.1 still imports.
+    "mcp>=1.24,<2",
+    "httpx>=0.28.1",
+    "bronto-sdk",
+    "opentelemetry-instrumentation-httpx>=0.65b0",
+]
+
+# Slack is opt-in: nothing reachable from investigator/__init__.py imports
+# slack_bolt, so the core install stays lean. aiohttp is required by AsyncApp and
+# AsyncSocketModeHandler but is NOT declared by slack-bolt (which ships no extras),
+# so relying on it arriving transitively would be relying on nothing.
+[project.optional-dependencies]
+slack = [
+    "slack-bolt>=1.21",
+    "aiohttp>=3.9",
+]
+webhook = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[project.urls]
+source = "https://github.com/bronto-community/bronto-alert-investigation-agent"
+issues = "https://github.com/bronto-community/bronto-alert-investigation-agent/issues"
+
+[project.scripts]
+investigator = "investigator.entrypoints.cli.main:main"
+investigator-slack = "investigator.entrypoints.slack.main:main"
+investigator-webhook = "investigator.entrypoints.webhook.main:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16",
+    "pyright>=1.1.414",
+    "pytest>=9",
+    "pytest-mock>=3.15",
+    "pytest-asyncio>=1.3",
+    "pytest-cov>=7",
+    # tests/test_required_checks.py parses the CI workflow
+    "pyyaml>=6",
+    # so the Slack adapter's tests can import it
+    "slack-bolt>=1.21",
+    "aiohttp>=3.9",
+    # and the webhook receiver's
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/investigator"]
+
+# Listed rather than globbed, so a stray local file (.claude/, AGENTS.md, a
+# planning note) can never ride along into an sdist.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/deploy",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md",
+    "/SECURITY.md",
+    "/LICENSE",
+    "/justfile",
+    "/pyproject.toml",
+    "/uv.lock",
+    "/.python-version",
+    "/Dockerfile",
+    "/visualize_graph.py",
+]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "D", "RUF"]
+
+# D102/D107: most undocumented methods implement a protocol (Human's ask/tell,
+# SlackApi's post/update) or override a langchain middleware hook, and are
+# documented once where that contract is defined; __init__ arguments are
+# described on the class. A docstring restating either at every site is noise.
+ignore = ["D102", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=investigator --cov-report=term-missing"
+filterwarnings = [
+    "error",
+    # starlette's TestClient wants the httpx2 fork; the receiver itself doesn't
+    # use httpx at all, so this is the test harness's problem, not ours.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.coverage.run]
+source = ["src/investigator"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "@overload", "raise NotImplementedError"]
+# The measured figure, rounded down: a floor that catches untested additions.
+fail_under = 93
+
+# Checked in so everyone — editor and CI alike — sees the same diagnostics.
+# Without `venv`, Pylance resolves against whatever interpreter VS Code happens
+# to have selected, and reports ~130 phantom "could not be resolved" errors for
+# langchain, langgraph and pytest that have nothing to do with the code.
+# `extraPaths` mirrors the pytest pythonpath, which pyright does not read.
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests", "visualize_graph.py"]
+extraPaths = ["src"]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
+reportUnnecessaryTypeIgnoreComment = true
+
+# Tests deliberately hand minimal fakes to precisely-typed third-party hooks:
+# a bare dict where langchain wants AgentState, None where it wants a Runtime,
+# a two-line stub where it wants a ModelRequest handler. That is the point of
+# a unit test, and satisfying the real generics would mean constructing
+# langchain internals we are trying to avoid depending on.
+#
+# Relaxed for tests only, rule by rule, so `src/` stays at zero and a genuine
+# type error in production code is still an error. Anything not listed here
+# (reportUndefinedVariable, reportMissingImports, ...) still fails the suite.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = [".", "src"]
+reportArgumentType = "none"
+reportCallIssue = "none"
+reportAttributeAccessIssue = "none"
+reportOptionalMemberAccess = "none"
+reportOptionalSubscript = "none"
+reportGeneralTypeIssues = "none"
+reportInvalidTypeArguments = "none"
+reportOperatorIssue = "none"
+reportIncompatibleMethodOverride = "none"
+reportFunctionMemberAccess = "none"
+reportAssignmentType = "none"
+reportIndexIssue = "none"
+reportReturnType = "none"
+# Strict mode's inference rules, as the SDK relaxes them for tests: fixtures
+# and fakes are untyped on purpose, so everything they touch is "unknown".
+reportMissingParameterType = "none"
+reportUnknownParameterType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"
+reportMissingTypeStubs = "none"
+reportPrivateUsage = "none"
+reportUntypedFunctionDecorator = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "src"
+# langgraph ships py.typed at its top level, but it is a namespace split across
+# several distributions, and pyright reports each submodule as stub-less. The
+# code itself is typed and is still read for types; this only silences the
+# "stub file not found" notice.
+reportMissingTypeStubs = "none"
+# langgraph and langchain leave holes in their own signatures (``Command[Unknown]``
+# in ``ainvoke``, untyped middleware hooks), and this rule reports each one at
+# every call site. The rules that catch *our* gaps — unknown parameters,
+# variables, arguments and returns — stay on.
+reportUnknownMemberType = "none"
+
+[tool.uv.sources]
+bronto-sdk = { url = "https://github.com/bronto-community/bronto-sdk-python/releases/download/v0.2.0/bronto_sdk-0.2.0-py3-none-any.whl" }

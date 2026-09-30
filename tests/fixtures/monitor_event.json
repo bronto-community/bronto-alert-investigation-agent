@@ -1,0 +1,8 @@
+{
+  "monitor_id": "mon-1",
+  "monitor_name": "foo bar baz",
+  "triggered_at": "2026-07-24T14:19:09Z",
+  "evaluation_timestamp": 1784901720000,
+  "new_status": "ALERT",
+  "previous_status": "OK"
+}

@@ -1,0 +1,37 @@
+# The webhook receiver on Fly.io. Copy to the repo root as fly.webhook.toml
+# (which is gitignored), set `app` and the Slack channel id to your own, then
+# `fly deploy -c fly.webhook.toml`.
+#
+# https://fly.io/docs/reference/configuration/ covers the settings below.
+
+app = '<your-webhook-app>'
+primary_region = 'ams'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  BRONTO_REGION = 'eu'
+
+[processes]
+  webhook = 'investigator-webhook --provider bedrock --model-id eu.anthropic.claude-sonnet-4-6 --report slack --slack-channel C0123456789'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['webhook']
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/health'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+  processes = ['webhook']

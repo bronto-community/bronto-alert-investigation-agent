@@ -1,0 +1,16 @@
+# The build needs pyproject.toml, uv.lock, README.md, LICENSE and src/. Everything else is either
+# reinstalled inside the image or has no business in it.
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+tests/
+visualize_graph.py
+*.png
+*.dot
+
+.claude/
+CLAUDE.md
+AGENTS.md
