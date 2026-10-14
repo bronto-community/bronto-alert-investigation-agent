@@ -296,7 +296,9 @@ async def test_resolve_queries_counts_a_pattern_monitor_select_star(mocker):
         "queries": [
             {
                 "select": ["*"],
-                "where": "\"Requester.resource_id.role_name\" NOT IN ('S3UploaderRole')",
+                "where": (
+                    "\"Requester.resource_id.role_name\" NOT IN ('S3UploaderRole')"
+                ),
                 "groups": groups,
                 "aggregation": [{"time": "count", "reduce_to": "avg"}],
                 "from": ["6c62"],
