@@ -2,15 +2,17 @@
 
 import asyncio
 import logging
-from typing import Any, cast
+from typing import Any
 
 from bronto_sdk import BrontoClient
 from bronto_sdk.domain import parse_window, project_dataset
 from bronto_sdk.models import DatasetsResponse, SearchRequest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from ..providers import can_force_tool_choice
 from ..settings import Deps
 from ..state import AlertContext, InvestigationState, Window
 
@@ -146,7 +148,12 @@ _QUERY_WHITELIST = ("select", "where", "groups")
 
 def _trim_query(query: dict[str, Any]) -> dict[str, Any]:
     """Reduce a monitor query to the fields needed to re-run it."""
-    return {key: query[key] for key in _QUERY_WHITELIST if key in query}
+    trimmed = {key: query[key] for key in _QUERY_WHITELIST if key in query}
+    if "select" in trimmed:
+        trimmed["select"] = [
+            "count(*)" if item == "*" else item for item in trimmed["select"]
+        ]
+    return trimmed
 
 
 # --- related datasets ---------------------------------------------------------
@@ -171,10 +178,19 @@ async def derive_related_datasets(
             "from the valid names above; omit anything not in that list."
         )
     ]
-    result = cast(
-        DeriveDatasets,
-        await model.with_structured_output(DeriveDatasets).ainvoke(prompt),
-    )
+    # A model that rejects forced tool use answers in the provider's native schema.
+    method = "function_calling" if can_force_tool_choice(model) else "json_schema"
+    structured = model.with_structured_output(DeriveDatasets, method=method)
+    try:
+        result = await structured.ainvoke(prompt)
+    except OutputParserException as exc:
+        result = None
+        logger.warning("unparseable answer: %s", exc)
+    if not isinstance(result, DeriveDatasets):
+        logger.warning(
+            "model gave no dataset list; continuing without related datasets"
+        )
+        return []
     return result.datasets
 
 

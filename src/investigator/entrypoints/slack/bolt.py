@@ -74,6 +74,9 @@ async def handle_mention(
 ) -> None:
     """Start a run from an @mention, in the thread it happened in.
 
+    A mention with no text of its own, inside a thread, takes its description
+    from the thread's first message — usually the alert someone is pointing at.
+
     An @mention inside a live thread arrives TWICE — once here and once as a
     `message` event. Returning early when the thread already has a run is what
     stops us both answering the pending question and starting a second,
@@ -89,6 +92,9 @@ async def handle_mention(
         await _ephemeral(client, channel_id, event.get("user", ""), refusal)
         return
     described = strip_mention(event.get("text", ""))
+    if not described and event.get("thread_ts"):
+        # A bare @mention under a message means "investigate that message".
+        described = await _thread_root_text(client, channel_id, thread_ts)
     try:
         await client.chat_postMessage(
             channel=channel_id,
@@ -175,6 +181,29 @@ def handle_message(registry: RunRegistry, event: dict[str, Any]) -> None:
         return
     logger.info("thread reply answering question %d in %s", seq, thread_ts)
     human.submit(seq=seq, text=event.get("text", ""))
+
+
+async def _thread_root_text(
+    client: AsyncWebClient, channel_id: str, thread_ts: str
+) -> str:
+    """The first message of a thread, or "" if it cannot be read.
+
+    Alert integrations often post an empty ``text`` and put the alert in an
+    attachment, so the attachment's text stands in for it.
+    """
+    try:
+        response = await client.conversations_replies(
+            channel=channel_id, ts=thread_ts, limit=1
+        )
+    except SlackApiError:
+        logger.warning("could not read the thread's first message", exc_info=True)
+        return ""
+    messages = cast(list[dict[str, Any]], response.get("messages") or [])
+    root = messages[0] if messages else {}
+    attachments = cast(list[dict[str, str]], root.get("attachments") or [{}])
+    text = cast(str, root.get("text") or "")
+    text = text or attachments[0].get("text") or attachments[0].get("fallback", "")
+    return strip_mention(text)
 
 
 async def _ephemeral(

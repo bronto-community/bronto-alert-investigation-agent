@@ -146,6 +146,82 @@ async def test_a_mention_runs_in_the_thread_it_happened_in(mocker):
     await registry.shutdown()
 
 
+async def test_a_bare_mention_in_a_thread_investigates_the_thread_root(mocker):
+    """`@investigator` alone under an alert means "look at this alert"."""
+    registry = RunRegistry(_asking(mocker))
+    client = _client(mocker)
+    client.conversations_replies.return_value = {
+        "messages": [{"ts": "1.0", "text": "checkout 5xx above threshold"}]
+    }
+
+    await handle_mention(
+        registry,
+        client,
+        {"channel": "C1", "ts": "9.9", "thread_ts": "1.0", "text": "<@U1>"},
+    )
+
+    client.conversations_replies.assert_awaited_once_with(
+        channel="C1", ts="1.0", limit=1
+    )
+    handle = registry.get("C1", "1.0")
+    assert handle is not None
+    assert handle.request_text == "checkout 5xx above threshold"
+    await registry.shutdown()
+
+
+async def test_a_bare_mention_reads_an_attachment_only_root(mocker):
+    """Alert integrations often post with an empty `text` and an attachment."""
+    registry = RunRegistry(_asking(mocker))
+    client = _client(mocker)
+    client.conversations_replies.return_value = {
+        "messages": [{"ts": "1.0", "text": "", "attachments": [{"fallback": "OOM"}]}]
+    }
+
+    await handle_mention(
+        registry,
+        client,
+        {"channel": "C1", "ts": "9.9", "thread_ts": "1.0", "text": "<@U1>"},
+    )
+
+    handle = registry.get("C1", "1.0")
+    assert handle is not None
+    assert handle.request_text == "OOM"
+    await registry.shutdown()
+
+
+async def test_a_bare_top_level_mention_has_no_thread_to_read(mocker):
+    registry = RunRegistry(_asking(mocker))
+    client = _client(mocker)
+
+    await handle_mention(
+        registry, client, {"channel": "C1", "ts": "9.9", "text": "<@U1>"}
+    )
+
+    client.conversations_replies.assert_not_awaited()
+    await registry.shutdown()
+
+
+async def test_an_unreadable_thread_root_still_starts_the_run(mocker):
+    from slack_sdk.errors import SlackApiError
+
+    registry = RunRegistry(_asking(mocker))
+    client = _client(mocker)
+    client.conversations_replies.side_effect = SlackApiError(
+        "missing_scope", {"error": "missing_scope"}
+    )
+
+    await handle_mention(
+        registry,
+        client,
+        {"channel": "C1", "ts": "9.9", "thread_ts": "1.0", "text": "<@U1>"},
+    )
+
+    handle = registry.get("C1", "1.0")
+    assert handle is not None
+    assert handle.request_text == ""
+    await registry.shutdown()
+
+
 async def test_a_mention_in_a_live_thread_does_not_start_a_second_run(mocker):
     """An @mention inside a live thread arrives twice — here and as a `message`.
     Without this guard you both answer the pending question and start a rival

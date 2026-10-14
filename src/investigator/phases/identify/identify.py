@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
+from ...providers import can_force_tool_choice
 from ...settings import Deps
 from ...state import InvestigationState
 from .confirm import (
@@ -53,10 +54,12 @@ def build_identification_node(deps: Deps):
     # lookup after the human-in-the-loop middleware is what makes it run
     # *before* it — the playbook is in state by the time the question renders.
     middleware: list[AgentMiddleware[Any]] = [
-        ForceToolChoiceMiddleware(),
         HumanInTheLoopMiddleware(INTERRUPT_ON),
         PlaybookLookupMiddleware(make_playbook_lookup(deps)),
     ]
+    # A model that rejects forced tool use relies on the system prompt alone
+    if can_force_tool_choice(deps.model):
+        middleware.insert(0, ForceToolChoiceMiddleware())
     agent: CompiledStateGraph[Any] = create_agent(
         deps.model,
         tools,

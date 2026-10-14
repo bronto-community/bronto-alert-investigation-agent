@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from langchain.chat_models import init_chat_model
+from langchain_aws.utils import forced_tool_choice_unsupported
 from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
@@ -89,3 +90,16 @@ def build_model(provider: str, model_id: str) -> BaseChatModel:
         config_prefix=None,
         **_MODEL_KWARGS.get(provider, {}),
     )
+
+
+def can_force_tool_choice(model: BaseChatModel) -> bool:
+    """Whether the model accepts a forced tool call (``tool_choice="any"``).
+
+    Some Claude models reject forced tool use outright, on every platform.
+    Bedrock models say so themselves; for the rest, the model name is checked
+    against the same per-model list, which langchain-aws owns.
+    """
+    values = getattr(model, "supports_tool_choice_values", None)
+    if values is not None:
+        return "any" in values
+    return not forced_tool_choice_unsupported(getattr(model, "model", None) or "")

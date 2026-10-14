@@ -40,7 +40,7 @@ updates:
       dev-tooling:
         patterns: ["ruff", "pyright", "pytest*", "pyyaml"]
       langchain:
-        patterns: ["langchain*", "langgraph*", "openinference-*"]
+        patterns: ["langchain*", "langgraph*"]
       opentelemetry:
         patterns: ["opentelemetry-*"]
 

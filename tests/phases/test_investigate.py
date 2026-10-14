@@ -157,7 +157,9 @@ def test_early_turns_are_left_untouched(make_model):
     handler, seen = _capture_request()
     request = _model_request(make_model([]), turns=1)
 
-    ConcludeWithinBudgetMiddleware(5).wrap_model_call(request, handler)
+    ConcludeWithinBudgetMiddleware(5, ToolStrategy(Findings)).wrap_model_call(
+        request, handler
+    )
 
     assert seen["request"] is request
 
@@ -167,7 +169,7 @@ def test_the_last_allowed_turn_asks_for_the_findings(make_model):
     what the evidence supports rather than stalling."""
     handler, seen = _capture_request()
 
-    ConcludeWithinBudgetMiddleware(5).wrap_model_call(
+    ConcludeWithinBudgetMiddleware(5, ToolStrategy(Findings)).wrap_model_call(
         _model_request(make_model([]), turns=4), handler
     )
 
@@ -185,7 +187,7 @@ def test_turns_are_counted_from_the_transcript(make_model, budget, turns, forced
     one forces the very first turn."""
     handler, seen = _capture_request()
 
-    ConcludeWithinBudgetMiddleware(budget).wrap_model_call(
+    ConcludeWithinBudgetMiddleware(budget, ToolStrategy(Findings)).wrap_model_call(
         _model_request(make_model([]), turns), handler
     )
 
@@ -202,7 +204,7 @@ async def test_conclude_middleware_implements_the_async_hook_too(make_model):
         seen["request"] = request
         return "response"
 
-    await ConcludeWithinBudgetMiddleware(2).awrap_model_call(
+    await ConcludeWithinBudgetMiddleware(2, ToolStrategy(Findings)).awrap_model_call(
         _model_request(make_model([]), turns=1), handler
     )
 
@@ -308,6 +310,40 @@ async def test_the_forced_final_turn_still_declares_a_tool(make_model):
     }
     assert [getattr(t, "name", None) for t in model.bound_tools or []] == ["Findings"]
     assert model.call_kwargs[-1]["tool_choice"] == "any"
+
+
+async def test_a_model_that_cannot_be_forced_answers_natively_to_the_end(
+    make_model,
+):
+    """Bedrock rejects tool_choice "any" outright for some models, and their
+    profile does not claim native structured output, so the bare schema would
+    resolve to the forced Findings tool. Every turn, the last included, asks
+    for the native schema instead and never forces a tool."""
+
+    @tool
+    async def search_logs(q: str = "") -> str:
+        """Search the logs."""
+        return "results"
+
+    model = make_model(
+        [
+            AIMessage(
+                content="", tool_calls=[{"name": "search_logs", "args": {}, "id": "c1"}]
+            ),
+            AIMessage(content=FINDINGS.model_dump_json()),
+        ],
+        tool_choices=("auto",),
+    )
+    deps = Deps(client=None, model=model, investigation_tools=[search_logs])
+    node = build_investigation_node(deps, max_model_calls=2)
+
+    assert await node({"alert_context": ALERT_CONTEXT}) == {
+        "findings": FINDINGS.model_dump()
+    }
+    for kwargs in model.call_kwargs:
+        assert "response_format" in kwargs
+        assert kwargs.get("tool_choice") is None
+    assert "Findings" not in [getattr(t, "name", None) for t in model.bound_tools or []]
 
 
 async def test_an_unparseable_native_answer_is_reported_as_no_findings(make_model):

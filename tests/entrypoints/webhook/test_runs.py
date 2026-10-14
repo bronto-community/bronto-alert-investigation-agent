@@ -116,7 +116,11 @@ async def test_a_wedged_run_is_abandoned_rather_than_holding_its_slot(mocker):
     )
 
     runs.start(EVENT)
-    await until(lambda: runs.live == 0, ticks=2000)
+    # The timeout is wall clock, so wait on the task rather than counting
+    # loop ticks: how many ticks fit in 10ms depends on the machine.
+    (task,) = runs._live
+    await asyncio.wait_for(task, timeout=5)
+    await until(lambda: runs.live == 0)
 
     assert any("too long" in e.text for e in human.events)
 
