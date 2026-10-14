@@ -11,7 +11,7 @@ named constant with the reference it came from.
 
 from typing import Any
 
-from ...human import Event, Option, Question
+from ...human import Answer, Event, Option, Question
 
 # https://docs.slack.dev/reference/block-kit/block-elements/button-element
 BUTTON_TEXT = 75
@@ -238,11 +238,23 @@ def render_question(
 
 
 def disabled_blocks(question: Question, *, note: str) -> list[dict[str, Any]]:
-    """The question with its controls removed, for a timed-out message.
+    """The question with its controls removed, once it is answered or expired.
 
     Slack has no flag that disables a button, so the actions block has to go.
     """
     return [_section(f"*{question.prompt}*"), context_block(note)]
+
+
+def answered_note(question: Question, answer: Answer) -> str:
+    """The line an answered question is retired with, saying what was taken."""
+    if answer.skip:
+        return ":white_check_mark: _skipped_"
+    if answer.text:
+        return ":white_check_mark: _answered in thread_"
+    option = question.option(answer.option_id) if answer.option_id else None
+    if option is not None:
+        return f":white_check_mark: _chose: {option.label}_"
+    return ":white_check_mark: _accepted the default_"
 
 
 # --- events -------------------------------------------------------------------

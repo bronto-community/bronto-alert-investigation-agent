@@ -7,6 +7,7 @@ from bronto_sdk.models import (
     SearchRequest,
     SearchResponse,
 )
+from langchain_core.exceptions import OutputParserException
 
 from investigator.phases.context import (
     _TRIGGER_BUFFER_MS,
@@ -108,7 +109,7 @@ async def test_context_node_end_to_end_with_playbook(mocker, fake_bronto):
         ("aaa", "syslog", "my-service"), ("app-1", "app.log", "my-app")
     )
     fake_bronto.datasets.list.side_effect = [query_datasets, every_dataset]
-    model = mocker.Mock()
+    model = mocker.Mock(supports_tool_choice_values=("auto", "any", "tool"))
     model.with_structured_output.return_value.ainvoke = mocker.AsyncMock(
         return_value=DeriveDatasets(datasets=["app.log"])
     )
@@ -118,7 +119,9 @@ async def test_context_node_end_to_end_with_playbook(mocker, fake_bronto):
 
     fake_bronto.monitors.retrieve.assert_called_once_with("mon-1")
     fake_bronto.metrics.retrieve_definition.assert_called_once_with("md-1")
-    model.with_structured_output.assert_called_once_with(DeriveDatasets)
+    model.with_structured_output.assert_called_once_with(
+        DeriveDatasets, method="function_calling"
+    )
     assert delta["alert_context"] == {
         "window": {"start_ms": 1784885580000, "end_ms": 1784903580000},
         "playbook": "check redis",
@@ -282,6 +285,32 @@ async def test_resolve_queries_folds_in_the_monitor_own_datasets(mocker):
     ]
 
 
+async def test_resolve_queries_counts_a_pattern_monitor_select_star(mocker):
+    """A pattern monitor selects `*` and counts matches through its
+    `aggregation`; Bronto rejects `*` beside `groups`, so the resolved query
+    selects `count(*)` instead."""
+    client = mocker.Mock()
+    client.datasets.list.return_value = _datasets(("6c62", "s3-access", "store"))
+    groups = ['"RequestURI_operation"', '"Requester.resource_id.role_name"']
+    monitor = {
+        "queries": [
+            {
+                "select": ["*"],
+                "where": "\"Requester.resource_id.role_name\" NOT IN ('S3UploaderRole')",
+                "groups": groups,
+                "aggregation": [{"time": "count", "reduce_to": "avg"}],
+                "from": ["6c62"],
+            }
+        ]
+    }
+
+    [query] = await resolve_queries(client, monitor)
+
+    assert query["select"] == ["count(*)"]
+    assert query["groups"] == groups
+    assert "aggregation" not in query
+
+
 async def test_resolve_queries_routes_from_expr_query(mocker):
     """A query selecting its datasets by `from_expr` (an empty `from` is unset)
     passes the expression through instead."""
@@ -375,7 +404,7 @@ def test_resolve_related_datasets_warns_on_unresolved_name(caplog):
 async def test_derive_related_datasets_grounds_prompt_with_valid_names(mocker):
     """With a playbook, the step feeds the model both the playbook and the list
     of valid dataset names (to pick from), and returns the chosen names."""
-    model = mocker.Mock()
+    model = mocker.Mock(supports_tool_choice_values=("auto", "any", "tool"))
     structured = model.with_structured_output.return_value
     structured.ainvoke = mocker.AsyncMock()
     structured.ainvoke.return_value = DeriveDatasets(datasets=["app.log", "reader"])
@@ -384,11 +413,53 @@ async def test_derive_related_datasets_grounds_prompt_with_valid_names(mocker):
 
     result = await derive_related_datasets(model, playbook, valid)
 
-    model.with_structured_output.assert_called_once_with(DeriveDatasets)
+    model.with_structured_output.assert_called_once_with(
+        DeriveDatasets, method="function_calling"
+    )
     sent = str(structured.ainvoke.call_args.args[0])
     assert playbook in sent
     assert "syslog" in sent  # a valid name the playbook never mentions
     assert result == ["app.log", "reader"]
+
+
+async def test_derive_related_datasets_uses_native_schema_when_tool_cannot_be_forced(
+    mocker,
+):
+    """A model that rejects forced tool use answers in the provider's native
+    JSON schema instead of through a forced tool call."""
+    model = mocker.Mock(supports_tool_choice_values=("auto",))
+    structured = model.with_structured_output.return_value
+    structured.ainvoke = mocker.AsyncMock(return_value=DeriveDatasets(datasets=[]))
+
+    await derive_related_datasets(model, "check redis", ["app.log"])
+
+    model.with_structured_output.assert_called_once_with(
+        DeriveDatasets, method="json_schema"
+    )
+
+
+async def test_derive_related_datasets_survives_a_malformed_answer(mocker, caplog):
+    """A weak model can wrap its JSON in markdown; related datasets are an
+    enrichment, so the step logs and continues without them."""
+    model = mocker.Mock(supports_tool_choice_values=("auto",))
+    model.with_structured_output.return_value.ainvoke = mocker.AsyncMock(
+        side_effect=OutputParserException('Invalid json output: **{"datasets": []}')
+    )
+
+    result = await derive_related_datasets(model, "check redis", ["app.log"])
+
+    assert result == []
+    assert "related datasets" in caplog.text
+
+
+async def test_derive_related_datasets_survives_no_answer(mocker):
+    """An unforced tool call the model never makes parses to None."""
+    model = mocker.Mock(supports_tool_choice_values=("auto",))
+    model.with_structured_output.return_value.ainvoke = mocker.AsyncMock(
+        return_value=None
+    )
+
+    assert await derive_related_datasets(model, "check redis", ["app.log"]) == []
 
 
 async def test_derive_related_datasets_skips_model_without_playbook(mocker):

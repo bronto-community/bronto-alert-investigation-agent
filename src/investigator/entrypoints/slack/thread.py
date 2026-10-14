@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from ...human import Answer, Event, Question, UnusableAnswer
 from .blocks import (
+    answered_note,
     context_block,
     disabled_blocks,
     fallback_text,
@@ -166,24 +167,33 @@ class SlackHuman:
                 blocks=render_question(question, seq=pending.seq, nonce=self._nonce),
                 text=fallback_text(question.prompt),
             )
-            return await asyncio.wait_for(pending.future, self._timeout)
+            answer = await asyncio.wait_for(pending.future, self._timeout)
         except TimeoutError:
-            await self._expire(pending)
+            note = "_no answer in time — this question expired_"
+            await self._retire(pending, note=note, text="question expired")
             raise QuestionTimeout(question.action) from None
         finally:
             if self._pending is pending:
                 self._pending = None
+        # Retired even if ``ask`` then rejects the answer: a re-ask is a new
+        # message under a new seq, so these buttons are stale either way.
+        note = answered_note(question, answer)
+        await self._retire(pending, note=note, text="question answered")
+        return answer
 
-    async def _expire(self, pending: _Pending) -> None:
-        """Retire a timed-out question so its buttons cannot still be clicked."""
+    async def _retire(self, pending: _Pending, *, note: str, text: str) -> None:
+        """Replace a finished question's buttons with ``note``.
+
+        Slack cannot grey a button out, so this is how a thread shows that an
+        answer was taken — or that none came — and why nothing is clickable.
+        """
         if pending.message_ts is None:
             return
-        note = "_no answer in time — this question expired_"
         try:
             await self._api.update(
                 ts=pending.message_ts,
                 blocks=disabled_blocks(pending.question, note=note),
-                text=fallback_text("question expired"),
+                text=fallback_text(text),
             )
-        except Exception:  # the run is ending either way
-            logger.warning("could not retire the expired question", exc_info=True)
+        except Exception:  # cosmetic; the run goes on (or ends) regardless
+            logger.warning("could not retire the question", exc_info=True)

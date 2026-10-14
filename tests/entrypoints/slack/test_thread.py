@@ -174,6 +174,35 @@ async def test_an_unusable_answer_is_re_asked_without_resuming_the_graph(slack_a
     task.cancel()
 
 
+# --- retiring an answered question --------------------------------------------
+
+
+async def test_an_answered_question_has_its_buttons_removed(slack_api):
+    """So the thread shows the answer was taken, and nobody clicks a dead button."""
+    human = _channel(slack_api)
+    task = asyncio.create_task(human.ask(_alert_question(_C0, _C1)))
+    await until(lambda: human.pending_seq == 1)
+
+    human.submit(seq=1, option_id="1")
+    await task
+
+    [update] = slack_api.updates
+    assert update["ts"] == "1700000000.000001"  # the question's own message
+    assert not [b for b in update["blocks"] if b["type"] == "actions"]
+    assert "payment latency" in str(update["blocks"])
+
+
+async def test_a_skipped_question_says_so(slack_api):
+    human = _channel(slack_api)
+    task = asyncio.create_task(human.ask(_playbook("check redis")))
+    await until(lambda: human.pending_seq == 1)
+
+    human.submit(seq=1, skip=True)
+    await task
+
+    assert "skipped" in str(slack_api.updates[0]["blocks"])
+
+
 # --- timeout ------------------------------------------------------------------
 
 

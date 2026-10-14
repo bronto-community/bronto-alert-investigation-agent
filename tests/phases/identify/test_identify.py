@@ -80,6 +80,24 @@ def test_monitor_prompt_directs_the_model_to_both_hitl_tools():
     assert "not batched" in rendered
 
 
+async def test_a_model_that_cannot_be_forced_is_never_asked_to(mocker, make_model):
+    """Bedrock rejects tool_choice "any" outright for some models, so for them
+    identification leans on its system prompt rather than forcing."""
+    model = make_model([AIMessage(content="not sure")], tool_choices=("auto",))
+
+    await build_identification_node(_deps(mocker, model))({"request_text": "oom"})
+
+    assert model.call_kwargs[-1].get("tool_choice") is None
+
+
+async def test_a_model_that_can_be_forced_is(mocker, make_model):
+    model = make_model([AIMessage(content="not sure")])
+
+    await build_identification_node(_deps(mocker, model))({"request_text": "oom"})
+
+    assert model.call_kwargs[-1]["tool_choice"] == "any"
+
+
 async def test_force_tool_choice_requires_a_tool_every_turn(mocker):
     """Without a response_format nothing forces tool use, and a single prose
     turn would end the phase instead of looping back to search. The async hook

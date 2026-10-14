@@ -39,6 +39,8 @@ class ScriptedChatModel(BaseChatModel):
     responses: list[BaseMessage] = Field(default_factory=list)
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     call_kwargs: list[dict] = Field(default_factory=list)
+    # Mirrors the attribute langchain-aws sets; None is a model that can force.
+    supports_tool_choice_values: tuple[str, ...] | None = None
 
     @property
     def _llm_type(self) -> str:
@@ -83,13 +85,16 @@ def make_model():
     def _make(
         responses: list[BaseMessage] | None = None,
         profile: dict | None = None,
+        tool_choices: tuple[str, ...] | None = None,
     ) -> ScriptedChatModel:
         """``profile={"structured_output": True}`` makes a bare response_format
         resolve to the provider's native structured output, as it does for the
-        real models; without it the agent falls back to the tool strategy."""
+        real models; without it the agent falls back to the tool strategy.
+        ``tool_choices=("auto",)`` is a model that rejects forced tool use."""
         return ScriptedChatModel(
             responses=list(responses or []),
             profile=profile,
+            supports_tool_choice_values=tool_choices,
         )
 
     return _make

@@ -8,13 +8,14 @@ from investigator.entrypoints.slack.blocks import (
     MARKDOWN_LIMIT,
     MAX_BUTTONS,
     MAX_SELECT_OPTIONS,
+    answered_note,
     disabled_blocks,
     format_action_id,
     parse_action_id,
     render_event,
     render_question,
 )
-from investigator.human import Event, Question
+from investigator.human import Answer, Event, Question
 from investigator.phases.identify.questions import (
     confirm_alert_question,
     playbook_question,
@@ -235,6 +236,19 @@ def test_a_retired_question_has_no_controls_left():
 
     assert not _of_type(blocks, "actions")
     assert "expired" in json.dumps(blocks)
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (Answer(option_id="1"), "payment latency"),
+        (Answer(skip=True), "skipped"),
+        (Answer(text="try payments"), "answered in thread"),
+        (Answer(), "accepted the default"),
+    ],
+)
+def test_the_answered_note_names_the_answer(answer, expected):
+    assert expected in answered_note(_alert_question(_C0, _C1), answer)
 
 
 # --- reports ------------------------------------------------------------------

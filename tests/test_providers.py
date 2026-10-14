@@ -9,6 +9,7 @@ from investigator.phases.investigate import Findings
 from investigator.providers import (
     ConfigError,
     build_model,
+    can_force_tool_choice,
     validate_provider_env,
 )
 
@@ -254,3 +255,47 @@ def test_build_model_constructs_real_model(provider, model_id, env, monkeypatch)
     model = build_model(provider, model_id)
 
     assert isinstance(model, BaseChatModel)
+
+
+@pytest.mark.parametrize(
+    "model_id, can_force",
+    [
+        ("eu.anthropic.claude-sonnet-5", True),
+        # Bedrock rejects tool_choice "any" for it: a ValidationException on
+        # langchain-aws releases that did not know.
+        ("eu.anthropic.claude-opus-5-5", False),
+    ],
+)
+def test_bedrock_reports_whether_a_tool_call_can_be_forced(
+    model_id, can_force, monkeypatch
+):
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+
+    assert can_force_tool_choice(build_model("bedrock", model_id)) is can_force
+
+
+@pytest.mark.parametrize(
+    "model_id, can_force",
+    [
+        ("claude-sonnet-5", True),
+        # The Claude API rejects tool_choice "any" and "tool" for these with a
+        # 400, and ChatAnthropic does not say so itself.
+        ("claude-opus-5-5", False),
+        ("claude-sonnet-5-5", False),
+        ("claude-fable-5-1", False),
+    ],
+)
+def test_anthropic_reports_whether_a_tool_call_can_be_forced(
+    model_id, can_force, monkeypatch
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    assert can_force_tool_choice(build_model("anthropic", model_id)) is can_force
+
+
+def test_openai_can_force_a_tool_call(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    assert can_force_tool_choice(build_model("openai", "gpt-5"))

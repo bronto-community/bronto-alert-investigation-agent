@@ -18,6 +18,7 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
 )
 from langchain.agents.structured_output import (
+    ProviderStrategy,
     StructuredOutputValidationError,
     ToolStrategy,
 )
@@ -27,6 +28,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from ..providers import can_force_tool_choice
 from ..settings import DEFAULT_MAX_MODEL_CALLS, Deps
 from ..state import InvestigationState, alert_context_text
 
@@ -43,6 +45,12 @@ def build_investigation_node(
     conclusion rather than by cutting the loop off, so the phase ends with
     findings.
     """
+    # A model that rejects forced tool use answers in the provider's native schema
+    # instead, on every turn including the last.
+    if can_force_tool_choice(deps.model):
+        response_format, conclusion = Findings, ToolStrategy(Findings)
+    else:
+        response_format = conclusion = ProviderStrategy(Findings)
     # Typed wide on purpose: create_agent's input type knows only `messages`,
     # not the `alert_context` channel DiagnosisState adds.
     agent: CompiledStateGraph[Any] = create_agent(
@@ -50,11 +58,11 @@ def build_investigation_node(
         deps.investigation_tools,
         system_prompt=SYSTEM_PROMPT,
         state_schema=DiagnosisState,
-        response_format=Findings,
+        response_format=response_format,
         middleware=[
             InvestigationWindowMiddleware(),
             ToolRetryMiddleware(max_retries=2, on_failure="continue"),
-            ConcludeWithinBudgetMiddleware(max_model_calls),
+            ConcludeWithinBudgetMiddleware(max_model_calls, conclusion),
         ],
         name="investigation",
     )
@@ -240,22 +248,29 @@ class ConcludeWithinBudgetMiddleware(AgentMiddleware):
     the conclusion, so the phase always yields findings.
     """
 
-    def __init__(self, max_model_calls: int) -> None:
+    def __init__(
+        self,
+        max_model_calls: int,
+        conclusion: ToolStrategy[Any] | ProviderStrategy[Any],
+    ) -> None:
         super().__init__()
         self._budget = max_model_calls
+        self._conclusion = conclusion
 
     def _bounded(self, request: ModelRequest) -> ModelRequest:
         turns = sum(1 for message in request.messages if isinstance(message, AIMessage))
         if turns < self._budget - 1:
             return request
         logger.info("investigation budget reached; forcing the conclusion")
-        # The search tools go, and the answer comes through the Findings tool,
-        # which the agent forces. A request that still carries tool calls in
-        # its transcript but declares no tools is one Bedrock rejects, so the
-        # native schema alone would not do here.
+        # The search tools go. Where the model can be forced, the answer comes
+        # through the Findings tool: a request that still carries tool calls in
+        # its transcript but declares no tools is one Bedrock rejects, and
+        # langchain-aws then flattens the history to text with a warning. A
+        # model that cannot be forced takes that flattening and answers in the
+        # native schema.
         return request.override(
             tools=[],
-            response_format=ToolStrategy(Findings),
+            response_format=self._conclusion,
             messages=[*request.messages, HumanMessage(FINAL_TURN_NUDGE)],
         )
 

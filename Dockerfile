@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
 #
-# One image, every surface. The CLI, the Slack bot and the webhook listener are
+# One image, every deployment mode. The CLI, the Slack bot and the webhook listener are
 # the same install differing only in which console script the host is told to
-# run, which is the containerised form of the claim the README makes: the shape
-# of the process differs, not the agent.
+# run.
 #
 # Neither extra is optional here. `slack` is needed by the Slack bot and by the
 # webhook's `--report slack`; `webhook` is needed by the listener.
@@ -35,9 +34,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # A job host that starts a container per event often gives it no stdin, so the
 # payload arrives in the environment instead and this script does the one
-# translation. It keeps a trigger a single flat command with no nested shell
-# quoting. The webhook surface needs none of this — it is passed the payload
-# over HTTP — so this is only for hosts that run one container per alert.
+# translation.
 COPY <<'SH' /usr/local/bin/investigate-event
 #!/bin/sh
 set -eu
