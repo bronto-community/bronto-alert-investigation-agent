@@ -1,8 +1,7 @@
 name: Release
 
 # Publishes the container image for a version tag, so trying the agent is a
-# `docker run` rather than a `docker build`. ci.yml already proves on every pull
-# request that the Dockerfile builds; this is the only workflow that pushes.
+# `docker run` rather than a `docker build`.
 on:
   push:
     tags:
@@ -21,7 +20,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history, so the next step can see whether main contains the
+          # tagged commit. A shallow clone has no ancestry to check.
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Tag is on main
+        # Only reviewed code gets published. main takes changes only through
+        # a pull request, but a tag can point at any commit, such as one
+        # pushed to a branch and never merged.
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main"
+            exit 1
+          fi
 
       - name: Tag matches the code
         # A tag cut without a version bump would publish an image whose
