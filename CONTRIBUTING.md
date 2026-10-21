@@ -135,6 +135,17 @@ blocks anything is to remove first:
    the updated `.github/required-status-checks.txt`.
 3. Add the new check to the ruleset.
 
+## Releasing
+
+A `v*` tag publishes the container image to ghcr.io and Docker Hub
+(`release.yml`). Pre-release tags such as `v1.1.0-rc.1` don't move `latest`.
+
+1. Bump the version in `pyproject.toml` and `src/investigator/__init__.py`, run
+   `uv lock`, and merge that as a pull request.
+2. Tag the merge commit and push the tag:
+   `git tag v1.1.0 && git push origin v1.1.0`. The workflow fails before
+   building if the tag doesn't match both versions.
+
 ## Reporting security issues
 
 Please don't open a public issue. See [SECURITY.md](SECURITY.md).

@@ -37,19 +37,24 @@ export BRONTO_API_KEY=…  BRONTO_REGION=eu
 uv run investigator --provider bedrock --model-id eu.anthropic.claude-sonnet-5
 ```
 
-Or, to try it without installing anything, run it in a container built from the
-[`Dockerfile`](Dockerfile):
+Or, to try it without installing anything, run the published container image:
 
 ```bash
-docker build -t investigator .
 export BRONTO_API_KEY=…  BRONTO_REGION=eu  ANTHROPIC_API_KEY=…
 docker run --rm -it -e BRONTO_API_KEY -e BRONTO_REGION -e ANTHROPIC_API_KEY \
-  investigator investigator --provider anthropic --model-id claude-sonnet-5
+  ghcr.io/bronto-community/bronto-alert-investigation-agent \
+  investigator --provider anthropic --model-id claude-sonnet-5
 ```
 
 `-it` is needed because the session asks you questions. `-e NAME` forwards a variable from your
 shell, so forward the ones your provider needs (see the table below). `--rm` removes the
-container when the session ends, and `docker rmi investigator` removes the image.
+container when the session ends, and `docker rmi ghcr.io/bronto-community/bronto-alert-investigation-agent`
+removes the image.
+
+The same image is on Docker Hub as `brontoio/bronto-alert-investigation-agent`. Both are built
+for `linux/amd64` and `linux/arm64`, tagged `latest` and with each release version, such as
+`1.0.0`. To run your own changes, build the [`Dockerfile`](Dockerfile) with
+`docker build -t investigator .` and use `investigator` in place of the image name.
 
 Configuration is entirely through environment variables. [`.env.example`](.env.example) lists
 every one of them.
@@ -121,7 +126,7 @@ very welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for what is accepted and wh
 
 ## Deploying it
 
-In addition to running the agent interactively via the CLI (as outlined in the quick start section above) you can also deploy the agent via the [`Dockerfile`](Dockerfile).
+In addition to running the agent interactively via the CLI (as outlined in the quick start section above) you can also deploy the agent as a container: the published image from the quick start, or one built from the [`Dockerfile`](Dockerfile).
 Every deployment needs 
 * `--provider`
 * `--model-id`
