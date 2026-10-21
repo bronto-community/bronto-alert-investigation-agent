@@ -2,8 +2,12 @@
 
 ## Supported versions
 
-This project has no releases. Security fixes land on `main` only. If you run a
-fork or a copy, pull fixes forward from there.
+Only the latest release is supported. Security fixes land on `main` and ship in
+the next release. Each `v*` tag publishes the container image to
+`ghcr.io/bronto-community/bronto-alert-investigation-agent` and
+`docker.io/brontoio/bronto-alert-investigation-agent`, with provenance and SBOM
+attestations on both. If you run a fork or a copy, pull fixes forward from
+`main`.
 
 ## Reporting a vulnerability
 
