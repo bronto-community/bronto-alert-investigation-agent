@@ -1,6 +1,6 @@
 [project]
 name = "bronto-investigator"
-version = "1.0.1"
+version = "1.0.2"
 description = "A logs-based alert investigation agent for Bronto."
 readme = "README.md"
 authors = [{ name = "Bronto", email = "support@bronto.io" }]
