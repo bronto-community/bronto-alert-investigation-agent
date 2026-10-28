@@ -111,17 +111,46 @@ class MonitorEventPayload(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _one_window_start(cls, data: Any) -> Any:
-        """Carry the window start under the one name the run reads."""
+    def _canonical_names(cls, data: Any) -> Any:
+        """Carry the monitor and the window start under the names the run reads."""
         if not isinstance(data, dict):
             return data
         payload = cast(dict[str, Any], data)
+        resource = payload.get("resource")
+        if isinstance(resource, dict):
+            payload = {
+                **{k: v for k, v in payload.items() if k != "resource"},
+                **{
+                    f"{_RESOURCE_PREFIX}{k}": v
+                    for k, v in cast(dict[str, Any], resource).items()
+                },
+            }
+        payload = with_monitor_names(payload)
         try:
             start = evaluation_start(payload)
         except KeyError:
             return payload  # left for the field's own "required" error
         rest = {k: v for k, v in payload.items() if k not in EVALUATION_START_KEYS}
         return {**rest, "evaluation_timestamp": start}
+
+
+# Audit schema 1.2.0 moved `monitor_id` and `monitor_name` under `resource`. The
+# old names stop being emitted after a deprecation window; old events keep them.
+MONITOR_KEYS = {
+    "monitor_id": ("resource.id", "monitor_id"),
+    "monitor_name": ("resource.name", "monitor_name"),
+}
+_RESOURCE_PREFIX = "resource."
+
+
+def with_monitor_names(payload: dict[str, Any]) -> dict[str, Any]:
+    """Carry the monitor's id and name under the names the run reads."""
+    rest = {k: v for k, v in payload.items() if not k.startswith(_RESOURCE_PREFIX)}
+    for name, keys in MONITOR_KEYS.items():
+        value = next((payload[key] for key in keys if key in payload), None)
+        if value is not None:
+            rest[name] = value
+    return rest
 
 
 def alert_context_text(alert_context: AlertContext | None) -> str:
