@@ -144,7 +144,8 @@ A `v*` tag publishes the container image to ghcr.io and Docker Hub
    `uv lock`, and merge that as a pull request.
 2. Tag the merge commit and push the tag:
    `git tag v1.1.0 && git push origin v1.1.0`. The workflow fails before
-   building if the tag doesn't match both versions.
+   building if the tagged commit isn't on `main`, or if the tag doesn't match
+   both versions.
 
 ## Reporting security issues
 
