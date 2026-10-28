@@ -8,4 +8,4 @@ to build against, so every import in the codebase names the module it comes
 from and there is no second list of names to keep in step.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
