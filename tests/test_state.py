@@ -95,3 +95,40 @@ def test_evaluation_start_prefers_the_new_name(payload, expected):
 def test_evaluation_start_raises_when_neither_name_is_present():
     with pytest.raises(KeyError):
         evaluation_start({"monitor_id": "mon-1"})
+
+
+# --- the monitor under `resource` ---------------------------------------------
+
+
+def test_a_replayed_1_2_0_payload_is_read_under_the_names_the_run_uses():
+    """Audit schema 1.2.0 moved the monitor's id and name under `resource`.
+    A replayed `service_payload` is normalized at the edge, like the window start."""
+    event = {
+        "resource": {"type": "MONITOR", "id": "mon-1", "name": "foo bar baz"},
+        "evaluation_timestamp": 1784901720000,
+    }
+
+    alert = state_for_event(event)["triggered_alert"]
+
+    assert alert["id"] == "mon-1"
+    assert alert["label"] == "foo bar baz"
+    assert alert["data"] == {
+        "monitor_id": "mon-1",
+        "monitor_name": "foo bar baz",
+        "evaluation_timestamp": 1784901720000,
+    }
+
+
+def test_the_resource_wins_when_an_event_carries_both():
+    event = {**_EVENT, "resource": {"id": "mon-2", "name": "new name"}}
+
+    data = state_for_event(event)["triggered_alert"]["data"]
+
+    assert data["monitor_id"] == "mon-2"
+    assert data["monitor_name"] == "new name"
+    assert "resource" not in data
+
+
+def test_an_event_with_neither_monitor_id_is_refused():
+    with pytest.raises(ValidationError):
+        state_for_event({"resource": {"name": "no id"}, "evaluation_timestamp": 1})

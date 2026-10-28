@@ -279,6 +279,7 @@ The payload is a JSON object. Two fields are required. Everything else in the bo
 | `monitor_id` | string | **required** | Which monitor fired. Every context lookup keys on it. |
 | `evaluation_window_start_ts` | integer | **required** | Unix-epoch **milliseconds**, and the **start** of the monitored window. The older name, `evaluation_timestamp`, is still accepted; when both are sent, the new name wins. |
 | `monitor_name` | string | optional | The name the report uses. Falls back to `monitor_id`. |
+| `resource` | object | optional | An audit event's `{"id", "name"}` for the monitor, from audit schema 1.2.0 on. When sent, `resource.id` and `resource.name` take the place of `monitor_id` and `monitor_name`. |
 | `triggered_at` | string | optional | ISO-8601, when the alert fired. For display only. |
 | anything else | any | optional | Kept verbatim. |
 
@@ -291,7 +292,8 @@ the agent cannot work from is rejected up front: the CLI exits `1` and the webho
 your Bronto account with the filter
 `"event_info.type"='MONITOR_STATE_CHANGE' AND "service_payload.new_status"='ALERT'`. Copy that
 event's `service_payload` object (not the whole event) into a file, then pass it with
-`--event file.json`.
+`--event file.json`. Both older events (`monitor_id`, `monitor_name`) and newer ones (`resource.id`,
+`resource.name`) work.
 
 ## How it works
 

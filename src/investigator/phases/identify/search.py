@@ -9,12 +9,20 @@ from langchain_core.messages import AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel
 
-from ...state import EVALUATION_START_KEYS, evaluation_start
+from ...state import EVALUATION_START_KEYS, evaluation_start, with_monitor_names
 
 # Bronto audit-trail dataset and the query fragments that isolate a
 # monitor transitioning *into* an alert state (a triggered alert).
 AUDIT_DATASET = ".audit-trail.events"
-MONITOR_NAME_GROUP = '"service_payload.monitor_name"'
+# Audit schema 1.2.0 moved `monitor_name` to `resource.name`, and a group-by names
+# one key, so the timeseries asks once per name. The second ask skips events that
+# still carry the old name, so none is counted twice. Drop the first once no
+# event in the searchable past carries `monitor_name`.
+MONITOR_NAME_GROUPS = (
+    ('"service_payload.monitor_name"', ""),
+    ('"service_payload.resource.name"', ' AND "service_payload.monitor_name" IS NULL'),
+)
+TOP_ALERTS = 10
 AUDIT_EVENTS_FILTER = (
     "\"event_info.type\"='MONITOR_STATE_CHANGE' "
     "AND \"service_payload.new_status\"='ALERT' "
@@ -54,39 +62,47 @@ def make_alert_timeseries_tool(client: BrontoClient) -> BaseTool:
         (e.g. '2026-07-15T00:00:00Z'). `pattern` optionally filters alert names
         and may contain `%` wildcards (0+ characters).
         """
-        response = client.post(
-            "/search",
-            json={
-                "async_enabled": False,
-                "from": [AUDIT_DATASET],
-                "groups": [MONITOR_NAME_GROUP],
-                "num_of_slices": 20,
-                "limit": 10,
-                "select": ["count(*)"],
-                "from_ts": iso_to_ms(start),
-                "to_ts": iso_to_ms(end),
-                "where": _audit_events_filter(pattern),
-            },
-        )
-        return _adapt_timeseries(response)
+        responses = [
+            client.post(
+                "/search",
+                json={
+                    "async_enabled": False,
+                    "from": [AUDIT_DATASET],
+                    "groups": [group],
+                    "num_of_slices": 20,
+                    "limit": TOP_ALERTS,
+                    "select": ["count(*)"],
+                    "from_ts": iso_to_ms(start),
+                    "to_ts": iso_to_ms(end),
+                    "where": _audit_events_filter(pattern) + only_new,
+                },
+            )
+            for group, only_new in MONITOR_NAME_GROUPS
+        ]
+        return _adapt_timeseries(responses)
 
     return search_alert_timeseries
 
 
-def _adapt_timeseries(response: dict[str, Any]) -> list[AlertTimeseries]:
-    """Adapt a /search response's groups_series into per-monitor series.
+def _adapt_timeseries(responses: list[dict[str, Any]]) -> list[AlertTimeseries]:
+    """Adapt /search responses' groups_series into per-monitor series.
 
     Ordered by total triggers descending, so the top alerts come first.
     """
-    series = [
-        AlertTimeseries(
-            monitor_name=group["name"],
-            total=group["count"],
-            counts=[slot["count"] for slot in group["timeseries"]],
-        )
-        for group in response.get("groups_series", [])
-    ]
-    return sorted(series, key=lambda s: s.total, reverse=True)
+    merged: dict[str, AlertTimeseries] = {}
+    for response in responses:
+        for group in response.get("groups_series", []):
+            counts = [slot["count"] for slot in group["timeseries"]]
+            seen = merged.get(group["name"])
+            if seen:
+                counts = [a + b for a, b in zip(seen.counts, counts, strict=True)]
+            merged[group["name"]] = AlertTimeseries(
+                monitor_name=group["name"],
+                total=group["count"] + (seen.total if seen else 0),
+                counts=counts,
+            )
+    series = sorted(merged.values(), key=lambda s: s.total, reverse=True)
+    return series[:TOP_ALERTS]
 
 
 def make_audit_events_tool(client: BrontoClient) -> BaseTool:
@@ -133,15 +149,19 @@ def _adapt_events(response: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     ``triggered_at`` is the notification fire time (the event's top-level
     ``timestamp``); ``evaluation_timestamp`` is the monitor window's start, for
     context generation, read under either of its names (see ``evaluation_start``).
+    ``monitor_id`` and ``monitor_name`` are likewise read from ``resource.*`` or
+    the old names (see ``with_monitor_names``).
     """
     content: list[dict[str, Any]] = []
     artifact: list[dict[str, Any]] = []
     for event in response.get("result", []):
-        payload = {
-            key[len(_SERVICE_PAYLOAD_PREFIX) :]: value
-            for key, value in event.items()
-            if key.startswith(_SERVICE_PAYLOAD_PREFIX)
-        }
+        payload = with_monitor_names(
+            {
+                key[len(_SERVICE_PAYLOAD_PREFIX) :]: value
+                for key, value in event.items()
+                if key.startswith(_SERVICE_PAYLOAD_PREFIX)
+            }
+        )
         triggered_at = _format_fire_time(event["timestamp"])
         evaluation_timestamp = int(evaluation_start(payload))
         artifact.append(
