@@ -203,6 +203,60 @@ def test_an_audit_row_with_the_renamed_window_start_is_adapted(mocker, names):
     ]
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        {"resource.type": "MONITOR", "resource.id": "m-1", "resource.name": "foo"},
+        {"monitor_id": "m-1", "monitor_name": "foo"},
+        {
+            "resource.id": "m-1",
+            "resource.name": "foo",
+            "monitor_id": "m-old",
+            "monitor_name": "old foo",
+        },
+    ],
+)
+def test_an_audit_row_with_the_monitor_under_resource_is_adapted(mocker, names):
+    """Audit schema 1.2.0 moved `monitor_id`/`monitor_name` under `resource`.
+    The row keeps the names the run reads, and the new names win."""
+    client = mocker.Mock()
+    client.post.return_value = {
+        "result": [
+            {
+                "timestamp": "2026-07-24T14:19:09.453550458Z",
+                "service_payload.evaluation_timestamp": "1784901720000",
+                **{f"service_payload.{k}": v for k, v in names.items()},
+            }
+        ]
+    }
+
+    msg = make_audit_events_tool(client).invoke(
+        {
+            "name": "search_audit_events",
+            "args": {"start": "2026-07-24T00:00:00Z", "end": "2026-07-25T00:00:00Z"},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+    )
+
+    assert msg.artifact == [
+        {
+            "monitor_id": "m-1",
+            "monitor_name": "foo",
+            "evaluation_timestamp": 1784901720000,
+            "triggered_at": "2026-07-24T14:19:09Z",
+        }
+    ]
+    assert json.loads(msg.content) == [
+        {
+            "triggered_at": "2026-07-24T14:19:09Z",
+            "monitor_name": "foo",
+            "monitor_id": "m-1",
+        }
+    ]
+    assert find_audit_row([msg], "m-1", "2026-07-24T14:19:09Z") is msg.artifact[0]
+
+
 # --- reading an audit row back ------------------------------------------------
 
 
@@ -285,8 +339,12 @@ def _series(name, counts):
     }
 
 
-def test_timeseries_tool_builds_request(mocker):
-    """The tool converts ISO-8601 start/end to epoch-ms from_ts/to_ts."""
+def test_timeseries_tool_builds_one_request_per_monitor_name(mocker):
+    """The tool converts ISO-8601 start/end to epoch-ms from_ts/to_ts.
+
+    Audit schema 1.2.0 moved `monitor_name` to `resource.name`, and a group-by
+    names one key, so it asks twice: once under the old name, and once under
+    the new name for only the events that no longer carry the old one."""
     client = mocker.Mock()
     client.post.return_value = {}
     tool = make_alert_timeseries_tool(client)
@@ -299,37 +357,88 @@ def test_timeseries_tool_builds_request(mocker):
         }
     )
 
-    client.post.assert_called_once_with(
-        "/search",
-        json={
-            "async_enabled": False,
-            "from": [".audit-trail.events"],
-            "groups": ['"service_payload.monitor_name"'],
-            "num_of_slices": 20,
-            "limit": 10,
-            "select": ["count(*)"],
-            "from_ts": _ms("2026-07-15T00:00:00Z"),
-            "to_ts": _ms("2026-07-16T00:00:00Z"),
-            "where": (
-                "\"event_info.type\"='MONITOR_STATE_CHANGE' "
-                "AND \"service_payload.new_status\"='ALERT' "
-                "AND \"service_payload.previous_status\" IN ('OK', 'WARN') "
-                "AND 'checkout%'"
-            ),
-        },
+    request = {
+        "async_enabled": False,
+        "from": [".audit-trail.events"],
+        "num_of_slices": 20,
+        "limit": 10,
+        "select": ["count(*)"],
+        "from_ts": _ms("2026-07-15T00:00:00Z"),
+        "to_ts": _ms("2026-07-16T00:00:00Z"),
+    }
+    where = (
+        "\"event_info.type\"='MONITOR_STATE_CHANGE' "
+        "AND \"service_payload.new_status\"='ALERT' "
+        "AND \"service_payload.previous_status\" IN ('OK', 'WARN') "
+        "AND 'checkout%'"
     )
+    assert client.post.call_args_list == [
+        mocker.call(
+            "/search",
+            json={
+                **request,
+                "groups": ['"service_payload.monitor_name"'],
+                "where": where,
+            },
+        ),
+        mocker.call(
+            "/search",
+            json={
+                **request,
+                "groups": ['"service_payload.resource.name"'],
+                "where": f'{where} AND "service_payload.monitor_name" IS NULL',
+            },
+        ),
+    ]
+
+
+def test_timeseries_merges_a_monitor_found_under_both_names(mocker):
+    """A monitor that fired before and after the old name was dropped is one series."""
+    client = mocker.Mock()
+    client.post.side_effect = [
+        {"groups_series": [_series("foo", [1, 2, 0, 0]), _series("bar", [0, 0, 1, 0])]},
+        {"groups_series": [_series("foo", [0, 0, 3, 4])]},
+    ]
+    tool = make_alert_timeseries_tool(client)
+
+    result = tool.invoke(
+        {"start": "2026-07-15T00:00:00Z", "end": "2026-07-16T00:00:00Z"}
+    )
+
+    assert result == [
+        AlertTimeseries(monitor_name="foo", total=10, counts=[1, 2, 3, 4]),
+        AlertTimeseries(monitor_name="bar", total=1, counts=[0, 0, 1, 0]),
+    ]
+
+
+def test_timeseries_keeps_the_top_ten_after_merging(mocker):
+    client = mocker.Mock()
+    client.post.side_effect = [
+        {"groups_series": [_series(f"old-{i}", [i]) for i in range(10)]},
+        {"groups_series": [_series(f"new-{i}", [i + 100]) for i in range(10)]},
+    ]
+    tool = make_alert_timeseries_tool(client)
+
+    result = tool.invoke(
+        {"start": "2026-07-15T00:00:00Z", "end": "2026-07-16T00:00:00Z"}
+    )
+
+    assert [s.monitor_name for s in result] == [f"new-{i}" for i in range(9, -1, -1)]
 
 
 def test_timeseries_response_adapted(mocker):
     """groups_series is adapted to per-monitor series, ordered by total desc."""
     client = mocker.Mock()
-    client.post.return_value = {
-        "groups_series": [
-            _series("foo", [0, 2, 3, 0]),
-            _series("bar", [0, 0, 6, 0]),
-        ],
-        "totals": {"count": 11},  # ignored by the adapter
-    }
+    client.post.side_effect = [
+        {
+            "groups_series": [
+                _series("foo", [0, 2, 3, 0]),
+                _series("bar", [0, 0, 6, 0]),
+            ],
+            "totals": {"count": 11},  # ignored by the adapter
+        },
+        {},
+    ]
     tool = make_alert_timeseries_tool(client)
 
     result = tool.invoke(
