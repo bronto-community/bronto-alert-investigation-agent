@@ -169,6 +169,8 @@ def test_audit_search_response_adapted(mocker):
             "evaluation_window_start_ts": "1784901720000",
             "evaluation_timestamp": "1784894880000",
         },
+        # A search mixing schemas blanks the columns a row lacks.
+        {"evaluation_window_start_ts": "", "evaluation_timestamp": "1784901720000"},
     ],
 )
 def test_an_audit_row_with_the_renamed_window_start_is_adapted(mocker, names):

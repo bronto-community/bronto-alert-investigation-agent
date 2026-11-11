@@ -93,10 +93,19 @@ EVALUATION_START_KEYS = ("evaluation_window_start_ts", "evaluation_timestamp")
 
 def evaluation_start(payload: dict[str, Any]) -> Any:
     """The monitored window's start, under whichever name the event uses."""
-    for key in EVALUATION_START_KEYS:
-        if key in payload:
-            return payload[key]
-    raise KeyError(EVALUATION_START_KEYS[-1])
+    value = _first_present(payload, EVALUATION_START_KEYS)
+    if value is None:
+        raise KeyError(EVALUATION_START_KEYS[-1])
+    return value
+
+
+def _first_present(payload: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """The value of the first key that carries one, or None.
+
+    An audit search mixing old and new schemas returns every column on every
+    row, blank (``''``) where the row lacks it, so blank counts as absent.
+    """
+    return next((payload[k] for k in keys if payload.get(k) not in (None, "")), None)
 
 
 class MonitorEventPayload(BaseModel):
@@ -147,7 +156,7 @@ def with_monitor_names(payload: dict[str, Any]) -> dict[str, Any]:
     """Carry the monitor's id and name under the names the run reads."""
     rest = {k: v for k, v in payload.items() if not k.startswith(_RESOURCE_PREFIX)}
     for name, keys in MONITOR_KEYS.items():
-        value = next((payload[key] for key in keys if key in payload), None)
+        value = _first_present(payload, keys)
         if value is not None:
             rest[name] = value
     return rest
