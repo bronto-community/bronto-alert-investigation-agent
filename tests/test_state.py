@@ -10,6 +10,7 @@ from investigator.state import (
     evaluation_start,
     state_for_event,
     state_for_request,
+    with_monitor_names,
 )
 
 _EVENT = {
@@ -86,6 +87,7 @@ def test_an_event_with_neither_name_is_refused():
         ({"evaluation_window_start_ts": _NEW}, _NEW),
         ({"evaluation_timestamp": 1}, 1),
         ({"evaluation_window_start_ts": _NEW, "evaluation_timestamp": 1}, _NEW),
+        ({"evaluation_window_start_ts": "", "evaluation_timestamp": 1}, 1),
     ],
 )
 def test_evaluation_start_prefers_the_new_name(payload, expected):
@@ -95,6 +97,11 @@ def test_evaluation_start_prefers_the_new_name(payload, expected):
 def test_evaluation_start_raises_when_neither_name_is_present():
     with pytest.raises(KeyError):
         evaluation_start({"monitor_id": "mon-1"})
+
+
+def test_evaluation_start_raises_when_every_name_is_blank():
+    with pytest.raises(KeyError):
+        evaluation_start({"evaluation_window_start_ts": "", "evaluation_timestamp": ""})
 
 
 # --- the monitor under `resource` ---------------------------------------------
@@ -127,6 +134,21 @@ def test_the_resource_wins_when_an_event_carries_both():
     assert data["monitor_id"] == "mon-2"
     assert data["monitor_name"] == "new name"
     assert "resource" not in data
+
+
+def test_a_blank_resource_falls_back_to_the_old_names():
+    """A search mixing schemas blanks the `resource.*` columns of an old row."""
+    payload = {
+        "resource.id": "",
+        "resource.name": "",
+        "monitor_id": "mon-1",
+        "monitor_name": "OOM killer",
+    }
+
+    assert with_monitor_names(payload) == {
+        "monitor_id": "mon-1",
+        "monitor_name": "OOM killer",
+    }
 
 
 def test_an_event_with_neither_monitor_id_is_refused():
